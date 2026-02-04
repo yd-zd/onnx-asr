@@ -1,14 +1,15 @@
 """GigaAM v2+ model implementations."""
 
-from collections.abc import Callable
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
 import onnxruntime as rt
 
-from onnx_asr.asr import Preprocessor, _AsrWithCtcDecoding, _AsrWithDecoding, _AsrWithTransducerDecoding
+from onnx_asr.asr import _AsrWithCtcDecoding, _AsrWithDecoding, _AsrWithTransducerDecoding
 from onnx_asr.onnx import OnnxSessionOptions, TensorRtOptions
+from onnx_asr.preprocessors.preprocessor import Preprocessor
 from onnx_asr.utils import is_float32_array, is_int32_array
 
 
@@ -17,15 +18,17 @@ class _GigaamV2(_AsrWithDecoding):
     def _get_model_files(quantization: str | None = None) -> dict[str, str]:
         return {"vocab": "v?_vocab.txt"}
 
-    @property
-    def _preprocessor_name(self) -> str:
-        assert self.config.get("features_size", 64) == 64
-        version = self.config.get("version", "v2")
+    @staticmethod
+    def _get_preprocessor_name(config: Mapping[str, object]) -> str:
+        assert config.get("features_size", 64) == 64
+        version = config.get("version", "v2")
         return f"gigaam_{version}"
 
     @property
     def _subsampling_factor(self) -> int:
-        return self.config.get("subsampling_factor", 4)
+        subsampling_factor = self.config.get("subsampling_factor", 4)
+        assert isinstance(subsampling_factor, int)
+        return subsampling_factor
 
 
 class GigaamV2Ctc(_AsrWithCtcDecoding, _GigaamV2):
@@ -33,11 +36,12 @@ class GigaamV2Ctc(_AsrWithCtcDecoding, _GigaamV2):
 
     def __init__(  # noqa: D107
         self,
+        config: dict[str, object],
         model_files: dict[str, Path],
-        preprocessor_factory: Callable[[str], Preprocessor],
+        preprocessor: Preprocessor,
         onnx_options: OnnxSessionOptions,
     ):
-        super().__init__(model_files, preprocessor_factory, onnx_options)
+        super().__init__(config, model_files, preprocessor, onnx_options)
         self._model = rt.InferenceSession(
             model_files["model"], **TensorRtOptions.add_profile(onnx_options, self._encoder_shapes)
         )
@@ -68,11 +72,12 @@ class GigaamV2Rnnt(_AsrWithTransducerDecoding[_STATE_TYPE], _GigaamV2):
 
     def __init__(  # noqa: D107
         self,
+        config: dict[str, object],
         model_files: dict[str, Path],
-        preprocessor_factory: Callable[[str], Preprocessor],
+        preprocessor: Preprocessor,
         onnx_options: OnnxSessionOptions,
     ):
-        super().__init__(model_files, preprocessor_factory, onnx_options)
+        super().__init__(config, model_files, preprocessor, onnx_options)
         self._encoder = rt.InferenceSession(
             model_files["encoder"], **TensorRtOptions.add_profile(onnx_options, self._encoder_shapes)
         )
@@ -90,7 +95,9 @@ class GigaamV2Rnnt(_AsrWithTransducerDecoding[_STATE_TYPE], _GigaamV2):
 
     @property
     def _max_tokens_per_step(self) -> int:
-        return self.config.get("max_tokens_per_step", 3)
+        max_tokens_per_step = self.config.get("max_tokens_per_step", 3)
+        assert isinstance(max_tokens_per_step, int)
+        return max_tokens_per_step
 
     def _encoder_shapes(self, waveform_len_ms: int, **kwargs: int) -> str:
         return "audio_signal:{batch}x64x{len},length:{batch}".format(len=waveform_len_ms // 10, **kwargs)

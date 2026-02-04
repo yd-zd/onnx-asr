@@ -1,14 +1,15 @@
 """NeMo model implementations."""
 
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
 import onnxruntime as rt
 
-from onnx_asr.asr import Preprocessor, _AsrWithCtcDecoding, _AsrWithDecoding, _AsrWithTransducerDecoding
+from onnx_asr.asr import _AsrWithCtcDecoding, _AsrWithDecoding, _AsrWithTransducerDecoding
 from onnx_asr.onnx import OnnxSessionOptions, TensorRtOptions
+from onnx_asr.preprocessors.preprocessor import Preprocessor
 from onnx_asr.utils import is_float32_array, is_int64_array
 
 
@@ -17,17 +18,21 @@ class _NemoConformer(_AsrWithDecoding):
     def _get_model_files(quantization: str | None = None) -> dict[str, str]:
         return {"vocab": "vocab.txt"}
 
-    @property
-    def _features_size(self) -> int:
-        return self.config.get("features_size", 80)
+    @staticmethod
+    def _get_preprocessor_name(config: Mapping[str, object]) -> str:
+        return f"nemo{config.get('features_size', 80)}"
 
     @property
-    def _preprocessor_name(self) -> str:
-        return f"nemo{self._features_size}"
+    def _features_size(self) -> int:
+        features_size = self.config.get("features_size", 80)
+        assert isinstance(features_size, int)
+        return features_size
 
     @property
     def _subsampling_factor(self) -> int:
-        return self.config.get("subsampling_factor", 8)
+        subsampling_factor = self.config.get("subsampling_factor", 8)
+        assert isinstance(subsampling_factor, int)
+        return subsampling_factor
 
     def _encoder_shapes(self, waveform_len_ms: int, **kwargs: int) -> str:
         return "audio_signal:{batch}x{features_size}x{len},length:{batch}".format(
@@ -40,11 +45,12 @@ class NemoConformerCtc(_AsrWithCtcDecoding, _NemoConformer):
 
     def __init__(  # noqa: D107
         self,
+        config: dict[str, object],
         model_files: dict[str, Path],
-        preprocessor_factory: Callable[[str], Preprocessor],
+        preprocessor: Preprocessor,
         onnx_options: OnnxSessionOptions,
     ):
-        super().__init__(model_files, preprocessor_factory, onnx_options)
+        super().__init__(config, model_files, preprocessor, onnx_options)
         self._model = rt.InferenceSession(
             model_files["model"], **TensorRtOptions.add_profile(onnx_options, self._encoder_shapes)
         )
@@ -70,11 +76,12 @@ class NemoConformerRnnt(_AsrWithTransducerDecoding[_STATE_TYPE], _NemoConformer)
 
     def __init__(  # noqa: D107
         self,
+        config: dict[str, object],
         model_files: dict[str, Path],
-        preprocessor_factory: Callable[[str], Preprocessor],
+        preprocessor: Preprocessor,
         onnx_options: OnnxSessionOptions,
     ):
-        super().__init__(model_files, preprocessor_factory, onnx_options)
+        super().__init__(config, model_files, preprocessor, onnx_options)
         self._encoder = rt.InferenceSession(
             model_files["encoder"], **TensorRtOptions.add_profile(onnx_options, self._encoder_shapes)
         )
@@ -90,7 +97,9 @@ class NemoConformerRnnt(_AsrWithTransducerDecoding[_STATE_TYPE], _NemoConformer)
 
     @property
     def _max_tokens_per_step(self) -> int:
-        return self.config.get("max_tokens_per_step", 10)
+        max_tokens_per_step = self.config.get("max_tokens_per_step", 10)
+        assert isinstance(max_tokens_per_step, int)
+        return max_tokens_per_step
 
     def _encode(
         self, features: npt.NDArray[np.float32], features_lens: npt.NDArray[np.int64]
@@ -143,11 +152,12 @@ class NemoConformerAED(_NemoConformer):
 
     def __init__(  # noqa: D107
         self,
+        config: dict[str, object],
         model_files: dict[str, Path],
-        preprocessor_factory: Callable[[str], Preprocessor],
+        preprocessor: Preprocessor,
         onnx_options: OnnxSessionOptions,
     ):
-        super().__init__(model_files, preprocessor_factory, onnx_options)
+        super().__init__(config, model_files, preprocessor, onnx_options)
         self._encoder = rt.InferenceSession(
             model_files["encoder"], **TensorRtOptions.add_profile(onnx_options, self._encoder_shapes)
         )
@@ -186,7 +196,9 @@ class NemoConformerAED(_NemoConformer):
 
     @property
     def _max_sequence_length(self) -> int:
-        return self.config.get("max_sequence_length", 1024)
+        max_sequence_length = self.config.get("max_sequence_length", 1024)
+        assert isinstance(max_sequence_length, int)
+        return max_sequence_length
 
     def _encode(
         self, features: npt.NDArray[np.float32], features_lens: npt.NDArray[np.int64]

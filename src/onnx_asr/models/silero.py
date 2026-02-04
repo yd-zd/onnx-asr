@@ -11,10 +11,10 @@ import onnxruntime as rt
 
 from onnx_asr.onnx import OnnxSessionOptions, TensorRtOptions
 from onnx_asr.utils import is_float32_array
-from onnx_asr.vad import Vad
+from onnx_asr.vad import _Vad
 
 
-class SileroVad(Vad):
+class SileroVad(_Vad):
     """Silero VAD implementation."""
 
     INF = 10**15

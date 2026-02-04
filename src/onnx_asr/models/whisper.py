@@ -3,7 +3,7 @@
 import json
 import typing
 from abc import abstractmethod
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import numpy as np
@@ -11,8 +11,9 @@ import numpy.typing as npt
 import onnxruntime as rt
 from onnxruntime import OrtValue
 
-from onnx_asr.asr import Asr, Preprocessor, TimestampedResult
+from onnx_asr.asr import Asr, TimestampedResult
 from onnx_asr.onnx import OnnxSessionOptions, TensorRtOptions, get_onnx_device
+from onnx_asr.preprocessors.preprocessor import Preprocessor
 from onnx_asr.utils import is_float32_array, is_int32_array
 
 
@@ -34,11 +35,23 @@ def bytes_to_unicode() -> dict[int, str]:
 class _Whisper(Asr):
     def __init__(
         self,
+        config: dict[str, object],
         model_files: dict[str, Path],
-        preprocessor_factory: Callable[[str], Preprocessor],
+        preprocessor: Preprocessor,
         onnx_options: OnnxSessionOptions,
     ):
-        super().__init__(model_files, preprocessor_factory, onnx_options)
+        """Create ASR.
+
+        Args:
+            config: Asr config.
+            model_files: Dict with paths to model files.
+            preprocessor: Asr preprocessor.
+            onnx_options: Options for onnxruntime InferenceSession.
+
+        """
+        self.config = config
+        self.preprocessor = preprocessor
+        self.runtime_config = onnx_options
 
         with model_files["vocab"].open("rt", encoding="utf-8") as f:
             self._tokens: dict[str, int] = json.load(f)
@@ -72,7 +85,7 @@ class _Whisper(Asr):
         return {"vocab": "vocab.json", "added_tokens": "added_tokens.json"}
 
     def _encode(self, waveforms: npt.NDArray[np.float32], waveforms_len: npt.NDArray[np.int64]) -> OrtValue:
-        input_features, _ = self._preprocessor(waveforms, waveforms_len)
+        input_features, _ = self.preprocessor(waveforms, waveforms_len)
         return OrtValue.ortvalue_from_numpy(input_features)
 
     @abstractmethod
@@ -89,6 +102,7 @@ class _Whisper(Asr):
     def recognize_batch(
         self, waveforms: npt.NDArray[np.float32], waveforms_len: npt.NDArray[np.int64], /, **kwargs: object | None
     ) -> Iterator[TimestampedResult]:
+        """Recognize waveforms batch."""
         input_encoding = self._encode(waveforms, waveforms_len)
         input_tokens = np.repeat(self._transcribe_input, len(waveforms), axis=0)
 
@@ -107,11 +121,12 @@ class WhisperOrt(_Whisper):
 
     def __init__(  # noqa: D107
         self,
+        config: dict[str, object],
         model_files: dict[str, Path],
-        preprocessor_factory: Callable[[str], Preprocessor],
+        preprocessor: Preprocessor,
         onnx_options: OnnxSessionOptions,
     ):
-        super().__init__(model_files, preprocessor_factory, onnx_options)
+        super().__init__(config, model_files, preprocessor, onnx_options)
         self._model = rt.InferenceSession(model_files["model"], **onnx_options)
 
     @staticmethod
@@ -119,9 +134,9 @@ class WhisperOrt(_Whisper):
         suffix = "?" + quantization if quantization else ""
         return {"model": f"whisper-*_beamsearch{suffix}.onnx"} | _Whisper._get_model_files(quantization)
 
-    @property
-    def _preprocessor_name(self) -> str:
-        return f"whisper{self.config.get('features_size', 80)}"
+    @staticmethod
+    def _get_preprocessor_name(config: Mapping[str, object]) -> str:
+        return f"whisper{config.get('features_size', 80)}"
 
     def _decoding(
         self, input_features: OrtValue, tokens: npt.NDArray[np.int64], max_length: int = 448
@@ -148,11 +163,12 @@ class WhisperHf(_Whisper):
 
     def __init__(  # noqa: D107
         self,
+        config: dict[str, object],
         model_files: dict[str, Path],
-        preprocessor_factory: Callable[[str], Preprocessor],
+        preprocessor: Preprocessor,
         onnx_options: OnnxSessionOptions,
     ):
-        super().__init__(model_files, preprocessor_factory, onnx_options)
+        super().__init__(config, model_files, preprocessor, onnx_options)
         self._encoder = rt.InferenceSession(model_files["encoder"], **onnx_options)
         self._decoder = rt.InferenceSession(model_files["decoder"], **onnx_options)
         self._device_type, self._device_id = get_onnx_device(self._encoder)
@@ -165,9 +181,9 @@ class WhisperHf(_Whisper):
             "decoder": f"**/decoder_model_merged{suffix}.onnx",
         } | _Whisper._get_model_files(suffix)
 
-    @property
-    def _preprocessor_name(self) -> str:
-        return f"whisper{self.config.get('num_mel_bins', 80)}"
+    @staticmethod
+    def _get_preprocessor_name(config: Mapping[str, object]) -> str:
+        return f"whisper{config.get('num_mel_bins', 80)}"
 
     def _encode(self, waveforms: npt.NDArray[np.float32], waveforms_len: npt.NDArray[np.int64]) -> OrtValue:
         input_features = super()._encode(waveforms, waveforms_len)

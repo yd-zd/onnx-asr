@@ -3,15 +3,25 @@
 from concurrent.futures import ThreadPoolExecutor
 from importlib.resources import files
 from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 import numpy.typing as npt
 import onnxruntime as rt
 
 import onnx_asr.preprocessors
-from onnx_asr.asr import Preprocessor
 from onnx_asr.onnx import OnnxSessionOptions, TensorRtOptions
 from onnx_asr.utils import is_float32_array, is_int64_array
+
+
+class Preprocessor(Protocol):
+    """ASR preprocessor protocol."""
+
+    def __call__(
+        self, waveforms: npt.NDArray[np.float32], waveforms_lens: npt.NDArray[np.int64]
+    ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.int64]]:
+        """Convert waveforms to model features."""
+        ...
 
 
 class IdentityPreprocessor:

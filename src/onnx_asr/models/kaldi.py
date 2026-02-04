@@ -1,14 +1,15 @@
 """Kaldi model implementations."""
 
-from collections.abc import Callable
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
 import onnxruntime as rt
 
-from onnx_asr.asr import Preprocessor, _AsrWithTransducerDecoding
+from onnx_asr.asr import _AsrWithTransducerDecoding
 from onnx_asr.onnx import OnnxSessionOptions, TensorRtOptions
+from onnx_asr.preprocessors.preprocessor import Preprocessor
 from onnx_asr.utils import is_float32_array, is_int64_array
 
 _STATE_TYPE = dict[tuple[int, ...], npt.NDArray[np.float32]]
@@ -21,11 +22,12 @@ class KaldiTransducer(_AsrWithTransducerDecoding[_STATE_TYPE]):
 
     def __init__(  # noqa: D107
         self,
+        config: dict[str, object],
         model_files: dict[str, Path],
-        preprocessor_factory: Callable[[str], Preprocessor],
+        preprocessor: Preprocessor,
         onnx_options: OnnxSessionOptions,
     ):
-        super().__init__(model_files, preprocessor_factory, onnx_options)
+        super().__init__(config, model_files, preprocessor, onnx_options)
         self._encoder = rt.InferenceSession(
             model_files["encoder"], **TensorRtOptions.add_profile(onnx_options, self._encoder_shapes)
         )
@@ -46,18 +48,22 @@ class KaldiTransducer(_AsrWithTransducerDecoding[_STATE_TYPE]):
             "vocab": "*/tokens.txt",
         }
 
-    @property
-    def _preprocessor_name(self) -> str:
-        assert self.config.get("features_size", 80) == 80
+    @staticmethod
+    def _get_preprocessor_name(config: Mapping[str, object]) -> str:
+        assert config.get("features_size", 80) == 80
         return "kaldi"
 
     @property
     def _subsampling_factor(self) -> int:
-        return self.config.get("subsampling_factor", 4)
+        subsampling_factor = self.config.get("subsampling_factor", 4)
+        assert isinstance(subsampling_factor, int)
+        return subsampling_factor
 
     @property
     def _max_tokens_per_step(self) -> int:
-        return self.config.get("max_tokens_per_step", 1)
+        max_tokens_per_step = self.config.get("max_tokens_per_step", 1)
+        assert isinstance(max_tokens_per_step, int)
+        return max_tokens_per_step
 
     def _encoder_shapes(self, waveform_len_ms: int, **kwargs: int) -> str:
         return "x:{batch}x{len}x80,x_lens:{batch}".format(len=waveform_len_ms // 10, **kwargs)

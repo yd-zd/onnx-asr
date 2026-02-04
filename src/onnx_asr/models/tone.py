@@ -1,6 +1,6 @@
 """T-one model implementations."""
 
-from collections.abc import Callable
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -8,8 +8,9 @@ import numpy as np
 import numpy.typing as npt
 import onnxruntime as rt
 
-from onnx_asr.asr import Preprocessor, _AsrWithCtcDecoding
+from onnx_asr.asr import _AsrWithCtcDecoding
 from onnx_asr.onnx import OnnxSessionOptions, TensorRtOptions
+from onnx_asr.preprocessors.preprocessor import Preprocessor
 from onnx_asr.utils import is_float16_array, is_float32_array
 
 
@@ -18,11 +19,12 @@ class TOneCtc(_AsrWithCtcDecoding):
 
     def __init__(  # noqa: D107
         self,
+        config: dict[str, object],
         model_files: dict[str, Path],
-        preprocessor_factory: Callable[[str], Preprocessor],
+        preprocessor: Preprocessor,
         onnx_options: OnnxSessionOptions,
     ):
-        super().__init__(model_files, preprocessor_factory, onnx_options)
+        super().__init__(config, model_files, preprocessor, onnx_options)
         self._model = rt.InferenceSession(
             model_files["model"], **TensorRtOptions.add_profile(onnx_options, self._encoder_shapes)
         )
@@ -31,9 +33,14 @@ class TOneCtc(_AsrWithCtcDecoding):
         self._chunk_size = shapes["signal"][1]
         self._state_size = shapes["state"][1]
 
-        self._vocab: dict[int, str] = dict(enumerate(self.config["decoder_params"]["vocabulary"]))  # type: ignore[typeddict-item]
+        decoder_params = self.config["decoder_params"]
+        assert isinstance(decoder_params, dict)
+        self._vocab: dict[int, str] = dict(enumerate(decoder_params["vocabulary"]))
         self._vocab_size = len(self._vocab) + 1
-        self._blank_idx = int(self.config["pad_token_id"])  # type: ignore[typeddict-item]
+
+        pad_token_id = self.config["pad_token_id"]
+        assert isinstance(pad_token_id, int)
+        self._blank_idx = pad_token_id
 
     @staticmethod
     def _get_excluded_providers() -> list[str]:
@@ -45,16 +52,18 @@ class TOneCtc(_AsrWithCtcDecoding):
         return {"model": f"model{suffix}.onnx"}
 
     @staticmethod
+    def _get_preprocessor_name(config: Mapping[str, object]) -> str:
+        return "identity"
+
+    @staticmethod
     def _get_sample_rate() -> Literal[8_000, 16_000]:
         return 8_000
 
     @property
-    def _preprocessor_name(self) -> str:
-        return "identity"
-
-    @property
     def _subsampling_factor(self) -> int:
-        return int(self.config["encoder_params"]["reduction_kernel_size"])  # type: ignore[typeddict-item]
+        encoder_params = self.config["encoder_params"]
+        assert isinstance(encoder_params, dict)
+        return int(encoder_params["reduction_kernel_size"])
 
     def _encoder_shapes(self, **kwargs: int) -> str:
         return "signal:{batch}x2400x1,state:{batch}x219729".format(**kwargs)

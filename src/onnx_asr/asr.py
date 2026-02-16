@@ -107,6 +107,7 @@ class BaseAsr(Asr):
 
 class _AsrWithDecoding(BaseAsr):
     DECODE_SPACE_PATTERN = re.compile(r"\A\s|\s\B|(\s)\b")
+    DECODE_DIGIT_SPACE_PATTERN = re.compile(r"(?<=[a-zA-Z])(?=\d)")
     window_step = 0.01
 
     def __init__(
@@ -145,6 +146,7 @@ class _AsrWithDecoding(BaseAsr):
     ) -> TimestampedResult:
         tokens = [self._vocab[i] for i in ids]
         text = re.sub(self.DECODE_SPACE_PATTERN, lambda x: " " if x.group(1) else "", "".join(tokens))
+        text = self.DECODE_DIGIT_SPACE_PATTERN.sub(" ", text)
         timestamps = (
             None if indices is None else (self.window_step * self._subsampling_factor * np.asarray(indices)).tolist()
         )
